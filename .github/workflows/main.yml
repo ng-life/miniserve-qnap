@@ -1,9 +1,9 @@
-name: Build QNAP QPKG
+name: Build QNAP QPKG with Auto Icon Conversion
 
 on:
   push:
     branches: [ "main" ]
-  workflow_dispatch: # 支持手动触发
+  workflow_dispatch:
 
 jobs:
   build:
@@ -13,34 +13,54 @@ jobs:
       - name: Checkout Code
         uses: actions/checkout@v4
 
+      # 1. 安装系统依赖
       - name: Install System Dependencies
         run: |
           sudo apt-get update
-          sudo apt-get install -y binutils perl python3 git
+          sudo apt-get install -y binutils perl python3 git inkscape
 
+      # 2. 设置 QDK
       - name: Setup QDK
         run: |
           git clone https://github.com/qnap-dev/QDK.git /opt/QDK
-          # 将 QDK 的 bin 目录添加到 GitHub Actions 的环境变量 PATH 中
           echo "/opt/QDK/bin" >> $GITHUB_PATH
 
+      # 3. [核心步骤] 将 logo.svg 转换为符合要求的 PNG
+      - name: Convert SVG Logo to QPKG Icons
+        run: |
+          # 确保 icons 目录存在
+          mkdir -p icons
+          
+          echo "Converting logo.svg to 64x64 PNG..."
+          # 转换 64x64 用于标准图标
+          inkscape logo.svg -w 64 -h 64 -o icons/miniserve.png
+          
+          echo "Converting logo.svg to 80x80 PNG..."
+          # 转换 80x80 用于 App Center 详情图标
+          inkscape logo.svg -w 80 -h 80 -o icons/miniserve_80.png
+          
+          # 验证文件是否生成
+          ls -lh icons/
+
+      # 4. 下载 Miniserve 二进制文件并设置权限
       - name: Download Miniserve Binary
         run: |
-          # 这里下载的是 x86_64 架构版本，你可以根据需要修改版本号或增加架构矩阵
           VERSION="0.33.0"
-          curl -L -o shared/miniserve https://github.com/svenstaro/miniserve/releases/download/v${VERSION}/miniserve-${VERSION}-x86_64-unknown-linux-musl
+          # 注意：这里默认打包的是 x86_64 架构
+          curl -L -o shared/miniserve https://github.com/svenstaro/miniserve/releases/download/v${VERSION}/miniserve-x86_64-unknown-linux-musl
           
-          # 关键步骤：在打包前赋予可执行权限
+          # 确保权限正确
           chmod +x shared/miniserve
           chmod +x shared/miniserve.sh
 
+      # 5. 执行打包
       - name: Build QPKG
         run: |
           mkdir -p dist
-          # --root 指向项目根目录（含 qpkg.cfg 的位置）
-          # --build_dir 指向输出目录
+          # QDK 会自动识别根目录下的 icons 文件夹
           qbuild --root . --build_dir ./dist
 
+      # 6. 上传 Artifact
       - name: Upload QPKG Artifact
         uses: actions/upload-artifact@v4
         with:
