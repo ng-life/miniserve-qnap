@@ -28,7 +28,7 @@ jobs:
         run: |
           # 这里下载的是 x86_64 架构版本，你可以根据需要修改版本号或增加架构矩阵
           VERSION="0.33.0"
-          curl -L -o shared/miniserve https://github.com/svenstaro/miniserve/releases/download/v${VERSION}/miniserve-x86_64-unknown-linux-musl
+          curl -L -o shared/miniserve https://github.com/svenstaro/miniserve/releases/download/v${VERSION}/miniserve-${VERSION}-x86_64-unknown-linux-musl
           
           # 关键步骤：在打包前赋予可执行权限
           chmod +x shared/miniserve
