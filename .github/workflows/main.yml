@@ -23,7 +23,8 @@ jobs:
       - name: Setup QDK
         run: |
           git clone https://github.com/qnap-dev/QDK.git /opt/QDK
-          echo "/opt/QDK/bin" >> $GITHUB_PATH
+          chmod +x /opt/QDK/shared/bin/qbuild
+          echo "/opt/QDK/shared/bin" >> $GITHUB_PATH
 
       # 3. [核心步骤] 将 logo.svg 转换为符合要求的 PNG
       - name: Convert SVG Logo to QPKG Icons
