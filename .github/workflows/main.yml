@@ -1,0 +1,48 @@
+name: Build QNAP QPKG
+
+on:
+  push:
+    branches: [ "main" ]
+  workflow_dispatch: # 支持手动触发
+
+jobs:
+  build:
+    runs-on: ubuntu-latest
+
+    steps:
+      - name: Checkout Code
+        uses: actions/checkout@v4
+
+      - name: Install System Dependencies
+        run: |
+          sudo apt-get update
+          sudo apt-get install -y binutils perl python3 git
+
+      - name: Setup QDK
+        run: |
+          git clone https://github.com/qnap-dev/QDK.git /opt/QDK
+          # 将 QDK 的 bin 目录添加到 GitHub Actions 的环境变量 PATH 中
+          echo "/opt/QDK/bin" >> $GITHUB_PATH
+
+      - name: Download Miniserve Binary
+        run: |
+          # 这里下载的是 x86_64 架构版本，你可以根据需要修改版本号或增加架构矩阵
+          VERSION="0.33.0"
+          curl -L -o shared/miniserve https://github.com/svenstaro/miniserve/releases/download/v${VERSION}/miniserve-x86_64-unknown-linux-musl
+          
+          # 关键步骤：在打包前赋予可执行权限
+          chmod +x shared/miniserve
+          chmod +x shared/miniserve.sh
+
+      - name: Build QPKG
+        run: |
+          mkdir -p dist
+          # --root 指向项目根目录（含 qpkg.cfg 的位置）
+          # --build_dir 指向输出目录
+          qbuild --root . --build_dir ./dist
+
+      - name: Upload QPKG Artifact
+        uses: actions/upload-artifact@v4
+        with:
+          name: miniserve-qpkg-x86_64
+          path: dist/*.qpkg
