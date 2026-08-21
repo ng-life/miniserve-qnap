@@ -1,69 +1,125 @@
-name: Build QNAP QPKG with Auto Icon Conversion
+name: Build x86_64 QPKG
 
 on:
   push:
-    branches: [ "main" ]
+    branches: [main]
+    tags: ["v*"]
+  pull_request:
   workflow_dispatch:
+
+concurrency:
+  group: qpkg-${{ github.workflow }}-${{ github.ref }}
+  cancel-in-progress: true
+
+env:
+  QDK_VERSION: "2.5.3"
+  QDK_DEB_SHA256: "17b3841b7d4590a4ee025844ba583304b5e3c497d9fa8934d5175131d3908022"
+  MINISERVE_VERSION: "0.35.0"
+  MINISERVE_SHA256: "c630ee030d5d9d83c88c5cc72f43ae215b0c214d64fd7afc92244fe369af2964"
 
 jobs:
   build:
-    runs-on: ubuntu-latest
+    name: Build and verify x86_64 QPKG
+    runs-on: ubuntu-24.04
+    permissions:
+      contents: read
 
     steps:
-      - name: Checkout Code
-        uses: actions/checkout@v4
+      - name: Check out repository
+        uses: actions/checkout@v7
 
-      # 1. 安装系统依赖
-      - name: Install System Dependencies
+      - name: Install QDK and musl toolchain
+        shell: bash
         run: |
+          set -euxo pipefail
           sudo apt-get update
-          sudo apt-get install -y binutils perl python3 git inkscape
+          sudo apt-get install -y musl-tools
+          curl -fsSL \
+            -o /tmp/qdk.deb \
+            "https://github.com/qnap-dev/QDK/releases/download/v${QDK_VERSION}/qdk_${QDK_VERSION}_amd64.deb"
+          echo "${QDK_DEB_SHA256}  /tmp/qdk.deb" | sha256sum -c -
+          sudo apt-get install -y /tmp/qdk.deb
+          qbuild --version
 
-      # 2. 设置 QDK
-      - name: Setup QDK
+      - name: Install Rust target
+        shell: bash
         run: |
-          git clone https://github.com/qnap-dev/QDK.git /opt/QDK
-          chmod +x /opt/QDK/shared/bin/qbuild
-          echo "/opt/QDK/shared/bin" >> $GITHUB_PATH
+          set -euxo pipefail
+          rustup target add x86_64-unknown-linux-musl
+          rustc --version
+          cargo --version
 
-      # 3. [核心步骤] 将 logo.svg 转换为符合要求的 PNG
-      - name: Convert SVG Logo to QPKG Icons
+      - name: Download verified miniserve binary
+        shell: bash
         run: |
-          # 确保 icons 目录存在
-          mkdir -p icons
-          
-          echo "Converting logo.svg to 64x64 PNG..."
-          # 转换 64x64 用于标准图标
-          inkscape logo.svg -w 64 -h 64 -o icons/miniserve.png
-          
-          echo "Converting logo.svg to 80x80 PNG..."
-          # 转换 80x80 用于 App Center 详情图标
-          inkscape logo.svg -w 80 -h 80 -o icons/miniserve_80.png
-          
-          # 验证文件是否生成
-          ls -lh icons/
+          set -euxo pipefail
+          mkdir -p x86_64/bin
+          curl -fsSL \
+            -o x86_64/bin/miniserve \
+            "https://github.com/svenstaro/miniserve/releases/download/v${MINISERVE_VERSION}/miniserve-${MINISERVE_VERSION}-x86_64-unknown-linux-musl"
+          echo "${MINISERVE_SHA256}  x86_64/bin/miniserve" | sha256sum -c -
+          chmod 0755 x86_64/bin/miniserve
 
-      # 4. 下载 Miniserve 二进制文件并设置权限
-      - name: Download Miniserve Binary
+      - name: Test and build manager
+        shell: bash
         run: |
-          VERSION="0.33.0"
-          # 注意：这里默认打包的是 x86_64 架构
-          curl -L -o shared/miniserve https://github.com/svenstaro/miniserve/releases/download/v${VERSION}/miniserve-x86_64-unknown-linux-musl
-          
-          # 确保权限正确
-          chmod +x shared/miniserve
-          chmod +x shared/miniserve.sh
+          set -euxo pipefail
+          cargo fmt --check
+          cargo test --locked
+          cargo build --locked --release --target x86_64-unknown-linux-musl
+          install -m 0755 \
+            target/x86_64-unknown-linux-musl/release/miniserve-qnap-manager \
+            x86_64/bin/miniserve-qnap-manager
+          file x86_64/bin/miniserve x86_64/bin/miniserve-qnap-manager
 
-      # 5. 执行打包
-      - name: Build QPKG
+      - name: Build and verify QPKG
+        shell: bash
         run: |
-          mkdir -p dist
-          # QDK 会自动识别根目录下的 icons 文件夹
-          qbuild --root . --build_dir ./dist
+          set -euxo pipefail
+          package_version="$(sed -n 's/^QPKG_VER="\([^"]*\)"/\1/p' qpkg.cfg)"
+          test -n "${package_version}"
+          if [[ "${GITHUB_REF_TYPE}" == "tag" ]]; then
+            test "${GITHUB_REF_NAME}" = "v${package_version}"
+          fi
+          qbuild --build-arch x86_64 --strict
+          md5sum -c "build/miniserve-qnap_${package_version}_x86_64.qpkg.md5"
+          qbuild --query info "build/miniserve-qnap_${package_version}_x86_64.qpkg"
+          sha256sum "build/miniserve-qnap_${package_version}_x86_64.qpkg"
 
-      # 6. 上传 Artifact
-      - name: Upload QPKG Artifact
-        uses: actions/upload-artifact@v4
+      - name: Upload QPKG artifact
+        uses: actions/upload-artifact@v7
         with:
-          name: miniserve-qpkg-x86_64
-          path: dist/*.qpkg
+          name: miniserve-qnap-x86_64
+          path: |
+            build/*.qpkg
+            build/*.qpkg.md5
+          if-no-files-found: error
+          retention-days: 30
+
+  release:
+    name: Publish GitHub release
+    if: startsWith(github.ref, 'refs/tags/v')
+    needs: build
+    runs-on: ubuntu-24.04
+    permissions:
+      contents: write
+
+    steps:
+      - name: Download verified build artifact
+        uses: actions/download-artifact@v8
+        with:
+          name: miniserve-qnap-x86_64
+          path: dist
+
+      - name: Create GitHub release
+        env:
+          GH_TOKEN: ${{ github.token }}
+        shell: bash
+        run: |
+          set -euxo pipefail
+          gh release create "${GITHUB_REF_NAME}" \
+            dist/*.qpkg \
+            dist/*.qpkg.md5 \
+            --repo "${GITHUB_REPOSITORY}" \
+            --title "Miniserve for QNAP ${GITHUB_REF_NAME}" \
+            --generate-notes
