@@ -72,6 +72,14 @@ jobs:
             x86_64/bin/miniserve-qnap-manager
           file x86_64/bin/miniserve x86_64/bin/miniserve-qnap-manager
 
+      - name: Smoke-test authenticated services
+        shell: bash
+        run: |
+          set -euxo pipefail
+          scripts/smoke-test.sh \
+            x86_64/bin/miniserve-qnap-manager \
+            x86_64/bin/miniserve
+
       - name: Build and verify QPKG
         shell: bash
         run: |
@@ -82,9 +90,8 @@ jobs:
             test "${GITHUB_REF_NAME}" = "v${package_version}"
           fi
           qbuild --build-arch x86_64 --strict
-          md5sum -c "build/miniserve-qnap_${package_version}_x86_64.qpkg.md5"
-          qbuild --query info "build/miniserve-qnap_${package_version}_x86_64.qpkg"
-          sha256sum "build/miniserve-qnap_${package_version}_x86_64.qpkg"
+          scripts/verify-qpkg.sh \
+            "build/miniserve-qnap_${package_version}_x86_64.qpkg"
 
       - name: Upload QPKG artifact
         uses: actions/upload-artifact@v7

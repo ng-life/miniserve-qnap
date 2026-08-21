@@ -1,22 +1,28 @@
 use axum::{
     Json, Router,
-    extract::State,
-    http::{StatusCode, header},
-    response::{Html, IntoResponse},
+    extract::{Request, State},
+    http::{HeaderValue, StatusCode, header},
+    middleware,
+    middleware::Next,
+    response::{Html, IntoResponse, Response},
     routing::{get, post, put},
 };
+use base64::{Engine as _, engine::general_purpose::STANDARD};
 use serde::{Deserialize, Serialize};
 use std::{
     collections::VecDeque,
     env,
+    fs::File,
+    io::Read,
     net::{IpAddr, SocketAddr},
     path::{Path, PathBuf},
     sync::{
         Arc,
         atomic::{AtomicU64, Ordering},
     },
-    time::{SystemTime, UNIX_EPOCH},
+    time::{Duration, SystemTime, UNIX_EPOCH},
 };
+use subtle::ConstantTimeEq;
 use tokio::{
     fs,
     io::{AsyncBufReadExt, BufReader},
@@ -78,6 +84,7 @@ struct AppState {
 
 struct Inner {
     config_path: PathBuf,
+    admin_auth_path: PathBuf,
     miniserve_path: PathBuf,
     child: Mutex<Option<Child>>,
     logs: RwLock<VecDeque<String>>,
@@ -108,12 +115,15 @@ type ApiError = (StatusCode, Json<ApiMessage>);
 async fn main() {
     let args: Vec<String> = env::args().collect();
     let config_path = arg_value(&args, "--config").unwrap_or_else(|| "./config.json".into());
+    let admin_auth_path =
+        arg_value(&args, "--admin-auth-file").unwrap_or_else(|| "./admin-auth.txt".into());
     let miniserve_path = arg_value(&args, "--miniserve").unwrap_or_else(|| "./miniserve".into());
     let listen = arg_value(&args, "--listen").unwrap_or_else(|| "0.0.0.0:8090".into());
 
     let state = AppState {
         inner: Arc::new(Inner {
             config_path: PathBuf::from(config_path),
+            admin_auth_path: PathBuf::from(admin_auth_path),
             miniserve_path: PathBuf::from(miniserve_path),
             child: Mutex::new(None),
             logs: RwLock::new(VecDeque::new()),
@@ -125,17 +135,25 @@ async fn main() {
         eprintln!("cannot initialize configuration: {error}");
         std::process::exit(1);
     }
+    if let Err(error) = ensure_admin_auth(&state).await {
+        eprintln!("cannot initialize management authentication: {error}");
+        std::process::exit(1);
+    }
     if let Err(error) = restart_miniserve(&state).await {
         push_log(&state, format!("ERROR miniserve 启动失败：{error}")).await;
     }
 
-    let app = Router::new()
+    let protected = Router::new()
         .route("/", get(index))
         .route("/favicon.ico", get(favicon))
         .route("/api/status", get(status))
         .route("/api/config", put(update_config))
         .route("/api/restart", post(restart))
         .fallback(not_found)
+        .route_layer(middleware::from_fn_with_state(state.clone(), require_admin));
+    let app = Router::new()
+        .route("/healthz", get(health))
+        .merge(protected)
         .with_state(state.clone());
 
     let address: SocketAddr = listen.parse().unwrap_or_else(|error| {
@@ -155,6 +173,55 @@ async fn main() {
         .await
     {
         eprintln!("management server error: {error}");
+    }
+}
+
+async fn require_admin(State(state): State<AppState>, request: Request, next: Next) -> Response {
+    let authorized = match request.headers().get(header::AUTHORIZATION) {
+        Some(value) => verify_basic_auth(&state.inner.admin_auth_path, value).await,
+        None => false,
+    };
+    if authorized {
+        return next.run(request).await;
+    }
+    (
+        StatusCode::UNAUTHORIZED,
+        [(header::WWW_AUTHENTICATE, "Basic realm=\"Miniserve QNAP\"")],
+        "Authentication required",
+    )
+        .into_response()
+}
+
+async fn verify_basic_auth(path: &Path, value: &HeaderValue) -> bool {
+    let Ok(header_value) = value.to_str() else {
+        return false;
+    };
+    let Some(encoded) = header_value.strip_prefix("Basic ") else {
+        return false;
+    };
+    let Ok(decoded) = STANDARD.decode(encoded) else {
+        return false;
+    };
+    let Ok(received) = std::str::from_utf8(&decoded) else {
+        return false;
+    };
+    let Ok(expected) = fs::read_to_string(path).await else {
+        return false;
+    };
+    constant_time_eq(received.as_bytes(), expected.trim_end().as_bytes())
+}
+
+fn constant_time_eq(left: &[u8], right: &[u8]) -> bool {
+    left.len() == right.len() && bool::from(left.ct_eq(right))
+}
+
+async fn health(State(state): State<AppState>) -> impl IntoResponse {
+    let mut child_guard = state.inner.child.lock().await;
+    let healthy = matches!(child_guard.as_mut().map(Child::try_wait), Some(Ok(None)));
+    if healthy {
+        (StatusCode::OK, "ok")
+    } else {
+        (StatusCode::SERVICE_UNAVAILABLE, "miniserve unavailable")
     }
 }
 
@@ -283,18 +350,54 @@ async fn ensure_config(state: &AppState) -> Result<(), String> {
     save_config(&state.inner.config_path, &Config::default()).await
 }
 
-async fn load_config(path: &Path) -> Result<Config, String> {
-    let bytes = fs::read(path)
-        .await
-        .map_err(|error| format!("cannot read {}: {error}", path.display()))?;
-    serde_json::from_slice(&bytes)
-        .map_err(|error| format!("cannot parse {}: {error}", path.display()))
+async fn ensure_admin_auth(state: &AppState) -> Result<(), String> {
+    let path = &state.inner.admin_auth_path;
+    if path.exists() {
+        let value = fs::read_to_string(path)
+            .await
+            .map_err(|error| format!("cannot read {}: {error}", path.display()))?;
+        validate_admin_auth(value.trim_end())?;
+        return Ok(());
+    }
+    if let Some(parent) = path.parent() {
+        fs::create_dir_all(parent)
+            .await
+            .map_err(|error| format!("cannot create authentication directory: {error}"))?;
+    }
+    let credentials = format!("admin:{}\n", random_password()?);
+    write_private(path, credentials.as_bytes()).await?;
+    eprintln!(
+        "Management password generated. Read the admin credentials from {}",
+        path.display()
+    );
+    Ok(())
 }
 
-async fn save_config(path: &Path, config: &Config) -> Result<(), String> {
-    let bytes = serde_json::to_vec_pretty(config)
-        .map_err(|error| format!("cannot serialize configuration: {error}"))?;
-    let temporary = path.with_extension("json.tmp");
+fn random_password() -> Result<String, String> {
+    let mut bytes = [0_u8; 18];
+    File::open("/dev/urandom")
+        .and_then(|mut source| source.read_exact(&mut bytes))
+        .map_err(|error| format!("cannot read secure random bytes: {error}"))?;
+    Ok(bytes.iter().map(|byte| format!("{byte:02x}")).collect())
+}
+
+fn validate_admin_auth(value: &str) -> Result<(), String> {
+    let Some((username, password)) = value.split_once(':') else {
+        return Err("management auth file must contain username:password".into());
+    };
+    if username.is_empty() || password.len() < 16 {
+        return Err(
+            "management username must be set and password must have at least 16 characters".into(),
+        );
+    }
+    if value.contains(['\n', '\r']) {
+        return Err("management credentials must be on one line".into());
+    }
+    Ok(())
+}
+
+async fn write_private(path: &Path, bytes: &[u8]) -> Result<(), String> {
+    let temporary = path.with_extension("tmp");
     fs::write(&temporary, bytes)
         .await
         .map_err(|error| format!("cannot write {}: {error}", temporary.display()))?;
@@ -308,6 +411,20 @@ async fn save_config(path: &Path, config: &Config) -> Result<(), String> {
     fs::rename(&temporary, path)
         .await
         .map_err(|error| format!("cannot replace {}: {error}", path.display()))
+}
+
+async fn load_config(path: &Path) -> Result<Config, String> {
+    let bytes = fs::read(path)
+        .await
+        .map_err(|error| format!("cannot read {}: {error}", path.display()))?;
+    serde_json::from_slice(&bytes)
+        .map_err(|error| format!("cannot parse {}: {error}", path.display()))
+}
+
+async fn save_config(path: &Path, config: &Config) -> Result<(), String> {
+    let bytes = serde_json::to_vec_pretty(config)
+        .map_err(|error| format!("cannot serialize configuration: {error}"))?;
+    write_private(path, &bytes).await
 }
 
 fn validate_config(config: &Config) -> Result<(), String> {
@@ -447,6 +564,22 @@ async fn restart_miniserve(state: &AppState) -> Result<(), String> {
         collect_output(state.clone(), stderr, "LOG");
     }
     *child_guard = Some(child);
+    drop(child_guard);
+    tokio::time::sleep(Duration::from_millis(350)).await;
+    let mut child_guard = state.inner.child.lock().await;
+    if let Some(child) = child_guard.as_mut() {
+        match child.try_wait() {
+            Ok(None) => {}
+            Ok(Some(exit)) => {
+                *child_guard = None;
+                return Err(format!("miniserve exited during startup: {exit}"));
+            }
+            Err(error) => return Err(format!("cannot inspect miniserve startup: {error}")),
+        }
+    } else {
+        return Err("miniserve process disappeared during startup".into());
+    }
+    drop(child_guard);
     state.inner.started_at.store(now(), Ordering::Relaxed);
     push_log(
         state,
@@ -524,8 +657,10 @@ mod tests {
 
     #[test]
     fn default_configuration_is_safe() {
-        let mut config = Config::default();
-        config.share_dir = env::temp_dir().display().to_string();
+        let config = Config {
+            share_dir: env::temp_dir().display().to_string(),
+            ..Config::default()
+        };
         assert!(validate_config(&config).is_ok());
         assert!(!config.upload);
         assert!(!config.follow_symlinks);
@@ -533,9 +668,11 @@ mod tests {
 
     #[test]
     fn mkdir_requires_upload() {
-        let mut config = Config::default();
-        config.share_dir = env::temp_dir().display().to_string();
-        config.mkdir = true;
+        let config = Config {
+            share_dir: env::temp_dir().display().to_string(),
+            mkdir: true,
+            ..Config::default()
+        };
         assert_eq!(
             validate_config(&config).unwrap_err(),
             "允许创建目录时必须同时允许上传"
@@ -544,9 +681,28 @@ mod tests {
 
     #[test]
     fn management_port_is_reserved() {
-        let mut config = Config::default();
-        config.share_dir = env::temp_dir().display().to_string();
-        config.port = 8090;
+        let config = Config {
+            share_dir: env::temp_dir().display().to_string(),
+            port: 8090,
+            ..Config::default()
+        };
         assert!(validate_config(&config).unwrap_err().contains("管理端口"));
+    }
+
+    #[test]
+    fn constant_time_credentials_require_exact_match() {
+        assert!(constant_time_eq(
+            b"admin:0123456789abcdef",
+            b"admin:0123456789abcdef"
+        ));
+        assert!(!constant_time_eq(b"admin:wrong", b"admin:0123456789abcdef"));
+    }
+
+    #[test]
+    fn management_password_is_long_and_random() {
+        let first = random_password().unwrap();
+        let second = random_password().unwrap();
+        assert_eq!(first.len(), 36);
+        assert_ne!(first, second);
     }
 }
