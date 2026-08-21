@@ -90,6 +90,11 @@ jobs:
             test "${GITHUB_REF_NAME}" = "v${package_version}"
           fi
           qbuild --build-arch x86_64 --strict
+          (
+            cd build
+            md5sum "miniserve-qnap_${package_version}_x86_64.qpkg" \
+              > "miniserve-qnap_${package_version}_x86_64.qpkg.md5"
+          )
           scripts/verify-qpkg.sh \
             "build/miniserve-qnap_${package_version}_x86_64.qpkg"
 
