@@ -26,7 +26,7 @@ jobs:
 
     steps:
       - name: Check out repository
-        uses: actions/checkout@v4
+        uses: actions/checkout@v7
 
       - name: Install QDK and musl toolchain
         shell: bash
@@ -87,7 +87,7 @@ jobs:
           sha256sum "build/miniserve-qnap_${package_version}_x86_64.qpkg"
 
       - name: Upload QPKG artifact
-        uses: actions/upload-artifact@v4
+        uses: actions/upload-artifact@v7
         with:
           name: miniserve-qnap-x86_64
           path: |
@@ -106,7 +106,7 @@ jobs:
 
     steps:
       - name: Download verified build artifact
-        uses: actions/download-artifact@v4
+        uses: actions/download-artifact@v8
         with:
           name: miniserve-qnap-x86_64
           path: dist
