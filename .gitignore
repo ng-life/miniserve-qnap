@@ -1,0 +1,5 @@
+/target/
+/build/
+/x86_64/bin/miniserve
+/x86_64/bin/miniserve-qnap-manager
+*.tmp

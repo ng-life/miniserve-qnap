@@ -1,0 +1,284 @@
+<!doctype html>
+<html lang="zh-CN">
+<head>
+  <meta charset="utf-8">
+  <meta name="viewport" content="width=device-width, initial-scale=1">
+  <meta name="color-scheme" content="light">
+  <title>Miniserve 控制台</title>
+  <style>
+    :root {
+      --navy: #08263f; --navy-2: #0b3455; --blue: #2f6fed; --blue-dark: #245dcc;
+      --green: #229a4b; --red: #c83b3b; --ink: #172231; --muted: #6d7888;
+      --line: #dfe4eb; --soft: #f5f7fa; --white: #fff; --radius: 5px;
+      font-family: Inter, ui-sans-serif, -apple-system, BlinkMacSystemFont, "Segoe UI", "Noto Sans SC", sans-serif;
+      color: var(--ink); background: var(--white); font-synthesis: none;
+    }
+    * { box-sizing: border-box; }
+    body { margin: 0; min-width: 320px; background: var(--white); }
+    button, input, select { font: inherit; }
+    button, a, input, select { -webkit-tap-highlight-color: transparent; }
+    .shell { min-height: 100vh; display: grid; grid-template-columns: 156px 1fr; }
+    .sidebar { background: linear-gradient(180deg, var(--navy), #061f34); color: #fff; padding: 24px 10px 18px; display: flex; flex-direction: column; position: sticky; top: 0; height: 100vh; }
+    .brand { height: 57px; display: grid; place-items: center; margin-bottom: 20px; }
+    .brand svg { width: 43px; height: 43px; stroke-width: 1.8; }
+    .nav { display: grid; gap: 7px; }
+    .nav button { border: 0; background: transparent; color: #e9f1f7; display: flex; align-items: center; gap: 12px; padding: 12px 13px; border-radius: 4px; text-align: left; cursor: pointer; font-size: 14px; }
+    .nav button:hover, .nav button.active { background: #2161c6; color: #fff; }
+    .nav svg { width: 20px; height: 20px; fill: none; stroke: currentColor; stroke-width: 1.8; }
+    .nav-bottom { margin-top: auto; }
+    .content { min-width: 0; }
+    .topbar { height: 62px; border-bottom: 1px solid var(--line); display: flex; align-items: center; gap: 22px; padding: 0 28px; }
+    .menu { width: 22px; height: 18px; display: grid; align-content: space-between; }
+    .menu i { display: block; height: 2px; background: var(--ink); border-radius: 2px; }
+    h1 { font-size: 20px; margin: 0; letter-spacing: -.02em; }
+    .top-meta { margin-left: auto; color: var(--muted); font-size: 13px; }
+    main { padding: 16px 18px 24px; }
+    .status { border: 1px solid var(--line); border-radius: var(--radius); min-height: 102px; display: grid; grid-template-columns: 1.2fr 1.45fr 1fr .65fr .8fr; align-items: center; padding: 18px 30px; margin-bottom: 12px; }
+    .status-primary { display: flex; align-items: center; gap: 18px; min-width: 180px; }
+    .dot { width: 19px; height: 19px; border-radius: 50%; background: var(--green); box-shadow: 0 0 0 4px #e8f7ed; flex: none; }
+    .dot.off { background: var(--red); box-shadow: 0 0 0 4px #faeaea; }
+    .status-title { font-size: 20px; color: var(--green); font-weight: 700; }
+    .status-title.off { color: var(--red); }
+    .metric { padding-left: 30px; border-left: 1px solid var(--line); min-width: 0; }
+    .metric label { display: block; color: var(--muted); font-size: 12px; margin-bottom: 9px; }
+    .metric strong, .metric a { display: block; color: var(--ink); font-weight: 500; font-size: 14px; overflow: hidden; text-overflow: ellipsis; white-space: nowrap; }
+    .metric a { color: var(--blue); text-decoration: none; }
+    .workspace { display: grid; grid-template-columns: 1.05fr 1fr; border: 1px solid var(--line); border-radius: var(--radius); overflow: hidden; }
+    .pane { min-width: 0; }
+    .pane + .pane { border-left: 1px solid var(--line); }
+    .section { padding: 19px 30px 22px; }
+    .section + .section { border-top: 1px solid var(--line); }
+    h2 { font-size: 18px; margin: 0 0 20px; letter-spacing: -.01em; }
+    .field { display: grid; grid-template-columns: 135px 1fr; align-items: center; gap: 15px; margin: 0 0 14px; }
+    .field > label { font-size: 14px; font-weight: 600; }
+    input, select { width: 100%; height: 40px; border: 1px solid #ccd3dd; border-radius: var(--radius); padding: 0 12px; color: var(--ink); background: #fff; outline: none; font-size: 14px; }
+    input:focus, select:focus { border-color: var(--blue); box-shadow: 0 0 0 3px rgba(47,111,237,.12); }
+    input::placeholder { color: #a0a9b5; }
+    .route-help, .password-help { grid-column: 2; margin: -7px 0 2px; color: var(--muted); font-size: 12px; line-height: 1.5; }
+    .switch-row { display: grid; grid-template-columns: 135px 50px 1fr; gap: 15px; align-items: center; min-height: 41px; }
+    .switch-row > label:first-child { font-size: 14px; font-weight: 600; }
+    .switch-row small { color: var(--muted); line-height: 1.4; }
+    .switch { position: relative; width: 44px; height: 24px; }
+    .switch input { opacity: 0; width: 0; height: 0; }
+    .slider { position: absolute; inset: 0; background: #b8bec7; border-radius: 30px; cursor: pointer; transition: .18s ease; }
+    .slider::before { content: ""; position: absolute; width: 18px; height: 18px; left: 3px; top: 3px; border-radius: 50%; background: white; box-shadow: 0 1px 3px rgba(0,0,0,.25); transition: .18s ease; }
+    .switch input:checked + .slider { background: var(--blue); }
+    .switch input:checked + .slider::before { transform: translateX(20px); }
+    .switch input:focus-visible + .slider { box-shadow: 0 0 0 3px rgba(47,111,237,.18); }
+    .actions { border: 1px solid var(--line); border-top: 0; min-height: 64px; display: flex; align-items: center; gap: 12px; padding: 10px 18px; }
+    .button { border: 1px solid #cbd2dc; background: #fff; color: var(--ink); height: 39px; padding: 0 20px; border-radius: var(--radius); cursor: pointer; font-weight: 600; font-size: 14px; }
+    .button:hover { background: var(--soft); }
+    .button.primary { background: var(--blue); border-color: var(--blue); color: #fff; }
+    .button.primary:hover { background: var(--blue-dark); }
+    .button:disabled { opacity: .55; cursor: wait; }
+    .save-note { margin-left: auto; color: var(--muted); font-size: 12px; }
+    .toast { color: var(--green); font-size: 13px; font-weight: 600; }
+    .toast.error { color: var(--red); }
+    .logs { border: 1px solid var(--line); border-radius: var(--radius); margin-top: 12px; overflow: hidden; }
+    .logs-head { height: 45px; display: flex; align-items: center; padding: 0 18px; border-bottom: 1px solid var(--line); }
+    .logs-head h2 { font-size: 14px; margin: 0; }
+    .logs-head button { margin-left: auto; border: 0; background: transparent; color: var(--blue); cursor: pointer; font-size: 13px; }
+    .log-list { max-height: 175px; overflow: auto; }
+    .log-row { display: grid; grid-template-columns: 155px 70px 1fr; min-height: 38px; align-items: center; gap: 10px; padding: 6px 18px; border-bottom: 1px solid #edf0f4; font: 12px/1.45 ui-monospace, SFMono-Regular, Menlo, Consolas, monospace; }
+    .log-row:last-child { border-bottom: 0; }
+    .level { font-family: inherit; font-weight: 700; color: var(--green); }
+    .level.error { color: var(--red); }
+    .empty { padding: 28px; color: var(--muted); text-align: center; font-size: 13px; }
+    .mobile-title { display: none; }
+    @media (max-width: 980px) {
+      .shell { grid-template-columns: 72px 1fr; }
+      .sidebar { padding-inline: 7px; }
+      .nav button { justify-content: center; padding-inline: 0; }
+      .nav span { display: none; }
+      .status { grid-template-columns: 1.2fr 1.2fr 1fr; padding-inline: 22px; }
+      .status .metric:last-child { display: none; }
+      .workspace { grid-template-columns: 1fr; }
+      .pane + .pane { border-left: 0; border-top: 1px solid var(--line); }
+    }
+    @media (max-width: 680px) {
+      .shell { display: block; }
+      .sidebar { position: fixed; z-index: 20; bottom: 0; top: auto; width: 100%; height: 58px; padding: 5px 7px; flex-direction: row; }
+      .brand, .nav-bottom { display: none; }
+      .nav { display: grid; grid-template-columns: repeat(5, 1fr); width: 100%; gap: 2px; }
+      .nav button { padding: 6px; }
+      .topbar { height: 56px; padding-inline: 18px; }
+      .top-meta, .menu { display: none; }
+      main { padding: 10px 10px 76px; }
+      .status { grid-template-columns: 1fr; gap: 14px; padding: 18px; }
+      .metric { border-left: 0; border-top: 1px solid var(--line); padding: 13px 0 0; }
+      .status .metric:nth-last-child(-n+2) { display: none; }
+      .section { padding: 18px 16px; }
+      .field { grid-template-columns: 1fr; gap: 7px; }
+      .route-help, .password-help { grid-column: 1; margin-top: -2px; }
+      .switch-row { grid-template-columns: 1fr 44px; gap: 10px; margin-bottom: 5px; }
+      .switch-row small { grid-column: 1 / -1; }
+      .actions { flex-wrap: wrap; }
+      .save-note { flex-basis: 100%; margin-left: 0; }
+      .log-row { grid-template-columns: 1fr; gap: 2px; }
+      .log-row time { color: var(--muted); }
+    }
+    @media (prefers-reduced-motion: reduce) { * { transition: none !important; } }
+  </style>
+</head>
+<body>
+  <div class="shell">
+    <aside class="sidebar" aria-label="主导航">
+      <div class="brand" aria-label="Miniserve"><svg viewBox="0 0 48 48" fill="none" stroke="currentColor"><path d="M6 12a4 4 0 0 1 4-4h10l5 6h13a4 4 0 0 1 4 4v20a4 4 0 0 1-4 4H10a4 4 0 0 1-4-4V12Z"/><path d="M7 24h34M14 33h11"/></svg></div>
+      <nav class="nav">
+        <button class="active" data-target="top"><svg viewBox="0 0 24 24"><path d="m3 11 9-8 9 8v9H6v-9"/><path d="M9 20v-6h6v6"/></svg><span>概览</span></button>
+        <button data-target="sharing"><svg viewBox="0 0 24 24"><path d="M3 7h7l2 2h9v10H3z"/></svg><span>共享设置</span></button>
+        <button data-target="access"><svg viewBox="0 0 24 24"><circle cx="9" cy="8" r="3"/><path d="M3 20v-2a6 6 0 0 1 12 0v2M16 5a3 3 0 0 1 0 6M18 14a5 5 0 0 1 3 5v1"/></svg><span>访问控制</span></button>
+        <button data-target="appearance"><svg viewBox="0 0 24 24"><circle cx="12" cy="12" r="9"/><path d="M12 3v18M3 12h18M5.7 6.3l12.6 11.4M18.3 6.3 5.7 17.7"/></svg><span>外观与列表</span></button>
+        <button data-target="logs"><svg viewBox="0 0 24 24"><path d="M6 3h9l4 4v14H6z"/><path d="M14 3v5h5M9 12h7M9 16h7"/></svg><span>日志</span></button>
+      </nav>
+      <nav class="nav nav-bottom"><button data-target="top"><svg viewBox="0 0 24 24"><circle cx="12" cy="12" r="9"/><path d="M12 8v.1M12 11v6"/></svg><span>关于</span></button></nav>
+    </aside>
+    <div class="content" id="top">
+      <header class="topbar"><span class="menu"><i></i><i></i><i></i></span><h1>Miniserve 控制台</h1><span class="top-meta">QNAP x86_64 · 管理端口 8090</span></header>
+      <main>
+        <section class="status" aria-label="服务状态">
+          <div class="status-primary"><span id="status-dot" class="dot off"></span><span id="status-title" class="status-title off">正在连接</span></div>
+          <div class="metric"><label>服务地址</label><a id="service-url" href="#" target="_blank" rel="noopener">—</a></div>
+          <div class="metric"><label>启动时间</label><strong id="started-at">—</strong></div>
+          <div class="metric"><label>版本</label><strong id="version">miniserve —</strong></div>
+          <div class="metric"><label>运行时间</label><strong id="uptime">—</strong></div>
+        </section>
+
+        <form id="config-form">
+          <div class="workspace">
+            <div class="pane">
+              <section class="section" id="sharing"><h2>共享设置</h2>
+                <div class="field"><label for="share_dir">共享目录</label><input id="share_dir" name="share_dir" required placeholder="/share/Public"></div>
+                <div class="field"><label for="listen_address">监听地址</label><select id="listen_address" name="listen_address"><option value="0.0.0.0">0.0.0.0（所有 IPv4 接口）</option><option value="::">::（所有 IPv6 接口）</option><option value="127.0.0.1">127.0.0.1（仅本机）</option></select></div>
+                <div class="field"><label for="port">服务端口</label><input id="port" name="port" type="number" min="1" max="65535" required></div>
+                <div class="field"><label for="title">页面标题</label><input id="title" name="title" maxlength="100"></div>
+                <div class="field"><label for="route_prefix">路由前缀</label><input id="route_prefix" name="route_prefix" placeholder="/files"><p class="route-help">可选；为空时从根路径访问，以 / 开头。</p></div>
+                <div class="switch-row"><label for="upload">允许上传</label><label class="switch"><input id="upload" name="upload" type="checkbox"><span class="slider"></span></label><small>允许用户上传文件到共享目录</small></div>
+                <div class="switch-row"><label for="mkdir">允许创建目录</label><label class="switch"><input id="mkdir" name="mkdir" type="checkbox"><span class="slider"></span></label><small>需要同时启用文件上传</small></div>
+                <div class="switch-row"><label for="hidden">显示隐藏文件</label><label class="switch"><input id="hidden" name="hidden" type="checkbox"><span class="slider"></span></label><small>显示以 . 开头的文件和目录</small></div>
+                <div class="switch-row"><label for="follow_symlinks">跟随符号链接</label><label class="switch"><input id="follow_symlinks" name="follow_symlinks" type="checkbox"><span class="slider"></span></label><small>关闭更安全，可防止访问共享目录之外的目标</small></div>
+              </section>
+            </div>
+            <div class="pane">
+              <section class="section" id="access"><h2>访问控制</h2>
+                <div class="field"><label for="username">用户名</label><input id="username" name="username" autocomplete="username" placeholder="留空表示不启用认证"><p class="password-help">清空用户名并保存可关闭访问认证。</p></div>
+                <div class="field"><label for="password">密码</label><input id="password" name="password" type="password" autocomplete="new-password" placeholder="未设置"><p id="password-help" class="password-help">保存时留空会保留现有密码。</p></div>
+              </section>
+              <section class="section" id="appearance"><h2>外观与列表</h2>
+                <div class="field"><label for="color_scheme">主题风格</label><select id="color_scheme" name="color_scheme"><option value="squirrel">Squirrel（明亮）</option><option value="archlinux">Arch Linux</option><option value="ayu-dark">Ayu Dark</option><option value="zenburn">Zenburn</option><option value="monokai">Monokai</option></select></div>
+                <div class="field"><label for="sorting_method">默认排序</label><select id="sorting_method" name="sorting_method"><option value="name">按名称</option><option value="date">按修改日期</option><option value="size">按文件大小</option></select></div>
+                <div class="field"><label for="sorting_order">排序方向</label><select id="sorting_order" name="sorting_order"><option value="asc">升序</option><option value="desc">降序</option></select></div>
+                <div class="field"><label for="index_file">索引文件</label><input id="index_file" name="index_file" placeholder="例如 index.html"></div>
+                <div class="switch-row"><label for="pretty_urls">启用美观 URL</label><label class="switch"><input id="pretty_urls" name="pretty_urls" type="checkbox"><span class="slider"></span></label><small>请求 /about 时尝试返回 about.html</small></div>
+              </section>
+            </div>
+          </div>
+          <div class="actions">
+            <button id="save" class="button primary" type="submit">保存并重启</button>
+            <button id="reset" class="button" type="button">重置</button>
+            <span id="toast" class="toast" role="status" aria-live="polite"></span>
+            <span class="save-note">配置保存在应用私有目录，权限为 0600。</span>
+          </div>
+        </form>
+
+        <section class="logs" id="logs"><div class="logs-head"><h2>运行日志（最近 100 条）</h2><button id="refresh-logs" type="button">刷新</button></div><div id="log-list" class="log-list"><div class="empty">正在读取日志…</div></div></section>
+      </main>
+    </div>
+  </div>
+  <script>
+    const fields = ["share_dir","listen_address","port","title","route_prefix","upload","mkdir","hidden","follow_symlinks","username","password","color_scheme","sorting_method","sorting_order","index_file","pretty_urls"];
+    let loadedConfig = null;
+    const $ = id => document.getElementById(id);
+    const escapeHtml = value => String(value).replace(/[&<>"']/g, c => ({"&":"&amp;","<":"&lt;",">":"&gt;",'"':"&quot;","'":"&#39;"}[c]));
+    function setForm(config, passwordSet) {
+      loadedConfig = {...config};
+      for (const name of fields) {
+        const element = $(name);
+        if (!element) continue;
+        if (element.type === "checkbox") element.checked = !!config[name];
+        else element.value = config[name] ?? "";
+      }
+      $("password").value = "";
+      $("password").placeholder = passwordSet ? "已设置；留空保持不变" : "未设置";
+      $("password-help").textContent = passwordSet ? "密码已设置，保存时留空会保留现有密码。" : "填写用户名和密码可启用 HTTP Basic 认证。";
+      syncDependencies();
+    }
+    function readForm() {
+      const config = {};
+      for (const name of fields) {
+        const element = $(name);
+        config[name] = element.type === "checkbox" ? element.checked : element.value;
+      }
+      config.port = Number(config.port);
+      return config;
+    }
+    function syncDependencies() {
+      if (!$("upload").checked) $("mkdir").checked = false;
+      $("mkdir").disabled = !$("upload").checked;
+    }
+    function formatTime(timestamp) {
+      if (!timestamp) return "—";
+      return new Intl.DateTimeFormat("zh-CN", {dateStyle:"medium", timeStyle:"medium"}).format(new Date(timestamp * 1000));
+    }
+    function formatUptime(timestamp) {
+      if (!timestamp) return "—";
+      const total = Math.max(0, Math.floor(Date.now() / 1000) - timestamp);
+      const days = Math.floor(total / 86400), hours = Math.floor(total % 86400 / 3600), minutes = Math.floor(total % 3600 / 60);
+      return `${days ? `${days} 天 ` : ""}${hours} 小时 ${minutes} 分钟`;
+    }
+    function renderStatus(data, replaceForm = false) {
+      $("status-dot").classList.toggle("off", !data.running);
+      $("status-title").classList.toggle("off", !data.running);
+      $("status-title").textContent = data.running ? "服务运行中" : "服务已停止";
+      $("service-url").textContent = data.service_url;
+      $("service-url").href = data.service_url.replace("NAS-IP", location.hostname);
+      $("started-at").textContent = formatTime(data.started_at);
+      $("version").textContent = `miniserve ${data.miniserve_version}`;
+      $("uptime").textContent = formatUptime(data.started_at);
+      renderLogs(data.logs || []);
+      if (replaceForm || !loadedConfig) setForm(data.config, data.password_set);
+    }
+    function renderLogs(logs) {
+      const host = $("log-list");
+      if (!logs.length) { host.innerHTML = '<div class="empty">暂无运行日志</div>'; return; }
+      host.innerHTML = logs.map(line => {
+        const firstSpace = line.indexOf(" ");
+        const timestamp = Number(line.slice(0, firstSpace));
+        const message = line.slice(firstSpace + 1);
+        const level = message.startsWith("ERROR") ? "ERROR" : message.startsWith("INFO") ? "INFO" : "LOG";
+        return `<div class="log-row"><time>${escapeHtml(formatTime(timestamp))}</time><span class="level ${level === "ERROR" ? "error" : ""}">${level}</span><span>${escapeHtml(message.replace(/^(ERROR|INFO|LOG)\s*/, ""))}</span></div>`;
+      }).join("");
+    }
+    function showToast(message, error = false) {
+      const toast = $("toast"); toast.textContent = message; toast.classList.toggle("error", error);
+      clearTimeout(showToast.timer); showToast.timer = setTimeout(() => toast.textContent = "", 5000);
+    }
+    async function request(url, options) {
+      const response = await fetch(url, {cache:"no-store", ...options});
+      const body = await response.json().catch(() => ({message:`HTTP ${response.status}`}));
+      if (!response.ok) throw new Error(body.message || `HTTP ${response.status}`);
+      return body;
+    }
+    async function refresh(replaceForm = false) {
+      try { renderStatus(await request("./api/status"), replaceForm); }
+      catch (error) { showToast(`无法连接管理服务：${error.message}`, true); }
+    }
+    $("config-form").addEventListener("submit", async event => {
+      event.preventDefault(); $("save").disabled = true; $("save").textContent = "正在保存…";
+      try {
+        const data = await request("./api/config", {method:"PUT", headers:{"Content-Type":"application/json"}, body:JSON.stringify(readForm())});
+        renderStatus(data, true); showToast("配置已保存，Miniserve 已重启");
+      } catch (error) { showToast(error.message, true); }
+      finally { $("save").disabled = false; $("save").textContent = "保存并重启"; }
+    });
+    $("reset").addEventListener("click", () => loadedConfig && setForm(loadedConfig, $("password").placeholder.startsWith("已设置")));
+    $("upload").addEventListener("change", syncDependencies);
+    $("refresh-logs").addEventListener("click", () => refresh(false));
+    document.querySelectorAll("[data-target]").forEach(button => button.addEventListener("click", () => {
+      document.querySelectorAll("[data-target]").forEach(item => item.classList.remove("active")); button.classList.add("active");
+      $(button.dataset.target)?.scrollIntoView({behavior:"smooth", block:"start"});
+    }));
+    refresh(true); setInterval(() => refresh(false), 5000);
+  </script>
+</body>
+</html>
