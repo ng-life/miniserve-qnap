@@ -40,12 +40,12 @@ cargo build --release --target x86_64-unknown-linux-musl
 install -m 0755 target/x86_64-unknown-linux-musl/release/miniserve-qnap-manager \
   x86_64/bin/miniserve-qnap-manager
 qbuild --build-arch x86_64 --strict
-scripts/verify-qpkg.sh build/miniserve-qnap_1.0.2_x86_64.qpkg
+scripts/verify-qpkg.sh build/miniserve-qnap_1.0.3_x86_64.qpkg
 ```
 
 构建结果位于 `build/`。可以在 QTS 的 App Center 中选择“手动安装”，上传生成的 `.qpkg`。
 
-GitHub Actions 会在每次推送和 Pull Request 时执行单元测试、认证 API/Miniserve 冒烟测试、严格 QPKG 构建及包清单审计，然后上传 x86_64 Artifact。推送与 `QPKG_VER` 对应的标签（例如 `v1.0.2`）时，会自动创建 GitHub Release 并附加 `.qpkg` 与 MD5 文件。
+GitHub Actions 会在每次推送和 Pull Request 时执行单元测试、QTS 生命周期脚本兼容性检查、认证 API/Miniserve 冒烟测试、严格 QPKG 构建及包清单审计，然后上传 x86_64 Artifact。推送与 `QPKG_VER` 对应的标签（例如 `v1.0.3`）时，会自动创建 GitHub Release 并附加 `.qpkg` 与 MD5 文件。
 
 ## 下载与安装
 
