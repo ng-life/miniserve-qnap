@@ -80,6 +80,16 @@ jobs:
             x86_64/bin/miniserve-qnap-manager \
             x86_64/bin/miniserve
 
+      - name: Validate QTS lifecycle compatibility
+        shell: bash
+        run: |
+          set -euxo pipefail
+          sh -n shared/miniserve-qnap.sh
+          if grep -nE '^[[:space:]]*nohup[[:space:]]' shared/miniserve-qnap.sh; then
+            echo "QTS does not guarantee that nohup is installed" >&2
+            exit 1
+          fi
+
       - name: Build and verify QPKG
         shell: bash
         run: |

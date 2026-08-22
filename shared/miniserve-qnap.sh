@@ -52,12 +52,15 @@ start_service() {
         echo "Required executable is missing."
         return 1
     fi
-    nohup "$MANAGER" \
+    # QTS does not guarantee a standalone nohup command. App Center invokes
+    # this as a non-interactive service script, so background the manager with
+    # stdin detached and keep its output in the private application log.
+    "$MANAGER" \
         --config "$CONFIG_FILE" \
         --admin-auth-file "$ADMIN_AUTH_FILE" \
         --miniserve "$MINISERVE" \
         --listen "0.0.0.0:8090" \
-        >>"$LOG_FILE" 2>&1 &
+        </dev/null >>"$LOG_FILE" 2>&1 &
     MANAGER_PID=$!
     echo "$MANAGER_PID" > "$PID_FILE"
     chmod 600 "$PID_FILE"
