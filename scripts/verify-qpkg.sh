@@ -37,6 +37,20 @@ data_archive="$work_dir/control/data.tar.gz"
 gzip -cd "$data_archive" >"$work_dir/data.tar" 2>/dev/null || [[ -s "$work_dir/data.tar" ]]
 tar -tf "$work_dir/data.tar" | sort | tee "$work_dir/manifest.txt"
 
+tar --numeric-owner -tvf "$work_dir/data.tar" >"$work_dir/metadata.txt"
+if awk '$2 != "0/0" { print; bad = 1 } END { exit bad }' "$work_dir/metadata.txt"; then
+  :
+else
+  echo "Every packaged payload entry must be owned by UID:GID 0:0 (admin:administrators on QTS)" >&2
+  exit 1
+fi
+if awk 'substr($1, 2) != "rwxr-xr-x" { print; bad = 1 } END { exit bad }' "$work_dir/metadata.txt"; then
+  :
+else
+  echo "Every packaged payload entry must have mode 0755" >&2
+  exit 1
+fi
+
 if grep -Eq '(^|/)\.gitkeep$' "$work_dir/manifest.txt"; then
   echo "Generated placeholder .gitkeep was packaged" >&2
   exit 1

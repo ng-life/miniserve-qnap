@@ -33,7 +33,7 @@ jobs:
         run: |
           set -euxo pipefail
           sudo apt-get update
-          sudo apt-get install -y musl-tools
+          sudo apt-get install -y fakeroot musl-tools
           curl -fsSL \
             -o /tmp/qdk.deb \
             "https://github.com/qnap-dev/QDK/releases/download/v${QDK_VERSION}/qdk_${QDK_VERSION}_amd64.deb"
@@ -99,7 +99,7 @@ jobs:
           if [[ "${GITHUB_REF_TYPE}" == "tag" ]]; then
             test "${GITHUB_REF_NAME}" = "v${package_version}"
           fi
-          qbuild --build-arch x86_64 --strict
+          fakeroot qbuild --build-arch x86_64 --strict
           (
             cd build
             md5sum "miniserve-qnap_${package_version}_x86_64.qpkg" \
