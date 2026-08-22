@@ -4,14 +4,14 @@
 ###### Command definitions #####
 #CMD_AWK="/bin/awk"
 #CMD_CAT="/bin/cat"
-#CMD_CHMOD="/bin/chmod"
-#CMD_CHOWN="/bin/chown"
+CMD_CHMOD="/bin/chmod"
+CMD_CHOWN="/bin/chown"
 #CMD_CP="/bin/cp"
 #CMD_CUT="/bin/cut"
 #CMD_DATE="/bin/date"
 #CMD_ECHO="/bin/echo"
 #CMD_EXPR="/usr/bin/expr"
-#CMD_FIND="/usr/bin/find"
+CMD_FIND="/usr/bin/find"
 #CMD_GETCFG="/sbin/getcfg"
 #CMD_GREP="/bin/grep"
 #CMD_GZIP="/bin/gzip"
@@ -136,5 +136,24 @@
 #pkg_install(){
 #}
 #
-#pkg_post_install(){
-#}
+pkg_post_install(){
+    [ -n "$SYS_QPKG_DIR" ] && [ -d "$SYS_QPKG_DIR" ] \
+        || err_log "QPKG installation directory is unavailable"
+
+    # Normalize files extracted from the archive and files retained during an
+    # upgrade. On QTS, UID:GID 0:0 is displayed as admin:administrators.
+    $CMD_CHOWN -R 0:0 "$SYS_QPKG_DIR" \
+        || err_log "Failed to set QPKG owner to admin:administrators"
+    $CMD_FIND "$SYS_QPKG_DIR" -type d -exec $CMD_CHMOD 0755 {} \; \
+        || err_log "Failed to set QPKG directory permissions"
+    $CMD_FIND "$SYS_QPKG_DIR" -type f -exec $CMD_CHMOD 0755 {} \; \
+        || err_log "Failed to set QPKG file permissions"
+
+    # Runtime configuration and credentials must never become world-readable.
+    if [ -d "$SYS_QPKG_DIR/var" ]; then
+        $CMD_FIND "$SYS_QPKG_DIR/var" -type d -exec $CMD_CHMOD 0700 {} \; \
+            || err_log "Failed to protect QPKG runtime directories"
+        $CMD_FIND "$SYS_QPKG_DIR/var" -type f -exec $CMD_CHMOD 0600 {} \; \
+            || err_log "Failed to protect QPKG runtime files"
+    fi
+}
