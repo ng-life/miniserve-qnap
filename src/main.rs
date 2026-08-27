@@ -118,7 +118,7 @@ async fn main() {
     let admin_auth_path =
         arg_value(&args, "--admin-auth-file").unwrap_or_else(|| "./admin-auth.txt".into());
     let miniserve_path = arg_value(&args, "--miniserve").unwrap_or_else(|| "./miniserve".into());
-    let listen = arg_value(&args, "--listen").unwrap_or_else(|| "0.0.0.0:8090".into());
+    let listen = arg_value(&args, "--listen").unwrap_or_else(|| "127.0.0.1:8090".into());
 
     let state = AppState {
         inner: Arc::new(Inner {

@@ -10,6 +10,12 @@ package="$(readlink -f "$1")"
 [[ -f "$package" ]] || { echo "Package not found: $package" >&2; exit 1; }
 command -v qbuild >/dev/null || { echo "qbuild is required" >&2; exit 1; }
 
+work_dir="$(mktemp -d /tmp/miniserve-qpkg-verify.XXXXXX)"
+cleanup() {
+  find "$work_dir" -depth -delete 2>/dev/null || true
+}
+trap cleanup EXIT
+
 checksum_file="${package}.md5"
 if [[ -f "$checksum_file" ]]; then
   expected_md5="$(awk 'NR == 1 { print $1 }' "$checksum_file")"
@@ -21,13 +27,16 @@ if [[ -f "$checksum_file" ]]; then
 fi
 
 qbuild --query info "$package"
-sha256sum "$package"
-
-work_dir="$(mktemp -d /tmp/miniserve-qpkg-verify.XXXXXX)"
-cleanup() {
-  find "$work_dir" -depth -delete 2>/dev/null || true
+qbuild --query dump "$package" >"$work_dir/settings.txt"
+grep -Fxq 'QPKG_USE_PROXY="1"' "$work_dir/settings.txt" || {
+  echo "QPKG_USE_PROXY must be enabled" >&2
+  exit 1
 }
-trap cleanup EXIT
+grep -Fxq 'QPKG_PROXY_PATH="/miniserve"' "$work_dir/settings.txt" || {
+  echo "QPKG_PROXY_PATH must be /miniserve" >&2
+  exit 1
+}
+sha256sum "$package"
 
 mkdir "$work_dir/control" "$work_dir/data"
 qbuild --extract "$package" "$work_dir/control" >/dev/null

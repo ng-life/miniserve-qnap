@@ -14,17 +14,17 @@
 
 ## 端口
 
-- `8090`：管理控制台，由 QTS App Center 图标打开；
+- `8090`：仅监听 NAS 本机，作为 QTS HTTP 代理的管理后端；
 - `8080`：默认文件共享端口，可在控制台修改。
 
-管理控制台监听 NAS 的所有接口，并强制使用独立的 HTTP Basic 认证。首次启动会生成随机管理密码；用户名为 `admin`。通过 SSH 登录 NAS 后执行：
+管理控制台启用 QTS HTTP 代理，挂载路径为 `/miniserve`，由 QTS Web 端口提供访问；后端 `127.0.0.1:8090` 不直接暴露到局域网。控制台仍强制使用独立的 HTTP Basic 认证。首次启动会生成随机管理密码；用户名为 `admin`。通过 SSH 登录 NAS 后执行：
 
 ```sh
 QPKG_ROOT="$(/sbin/getcfg miniserve-qnap Install_Path -f /etc/config/qpkg.conf)"
 sudo cat "$QPKG_ROOT/var/admin-auth.txt"
 ```
 
-文件内容格式为 `用户名:密码`，权限为 `0600`。在 QTS 中点击应用图标后，浏览器会显示登录提示。管理流量当前使用 HTTP，请只在可信局域网或受保护的 VPN 内访问，不要把 `8090` 暴露到互联网。
+文件内容格式为 `用户名:密码`，权限为 `0600`。在 QTS 中点击应用图标后，浏览器会通过 `/miniserve` 代理路径显示登录提示。是否使用 HTTPS 取决于 QTS 管理界面的访问方式。
 
 文件共享使用另一套、可选的用户名和密码，通过控制台配置。文件共享密码同样以 `0600` 保存，且状态 API 永不返回存储的密码。
 
@@ -40,12 +40,12 @@ cargo build --release --target x86_64-unknown-linux-musl
 install -m 0755 target/x86_64-unknown-linux-musl/release/miniserve-qnap-manager \
   x86_64/bin/miniserve-qnap-manager
 fakeroot qbuild --build-arch x86_64 --strict
-scripts/verify-qpkg.sh build/miniserve-qnap_1.0.4_x86_64.qpkg
+scripts/verify-qpkg.sh build/miniserve-qnap_1.0.5_x86_64.qpkg
 ```
 
 构建结果位于 `build/`。可以在 QTS 的 App Center 中选择“手动安装”，上传生成的 `.qpkg`。
 
-GitHub Actions 会在每次推送和 Pull Request 时执行单元测试、QTS 生命周期脚本兼容性检查、认证 API/Miniserve 冒烟测试、严格 QPKG 构建及包清单、属主和权限审计，然后上传 x86_64 Artifact。推送与 `QPKG_VER` 对应的标签（例如 `v1.0.4`）时，会自动创建 GitHub Release 并附加 `.qpkg` 与 MD5 文件。
+GitHub Actions 会在每次推送和 Pull Request 时执行单元测试、QTS 生命周期脚本兼容性检查、认证 API/Miniserve 冒烟测试、HTTP 代理元数据检查、严格 QPKG 构建及包清单、属主和权限审计，然后上传 x86_64 Artifact。推送与 `QPKG_VER` 对应的标签（例如 `v1.0.5`）时，会自动创建 GitHub Release 并附加 `.qpkg` 与 MD5 文件。
 
 ## 下载与安装
 
