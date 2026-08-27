@@ -59,7 +59,7 @@ start_service() {
         --config "$CONFIG_FILE" \
         --admin-auth-file "$ADMIN_AUTH_FILE" \
         --miniserve "$MINISERVE" \
-        --listen "0.0.0.0:8090" \
+        --listen "127.0.0.1:8090" \
         </dev/null >>"$LOG_FILE" 2>&1 &
     MANAGER_PID=$!
     echo "$MANAGER_PID" > "$PID_FILE"
