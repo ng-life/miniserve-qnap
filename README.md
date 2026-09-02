@@ -15,7 +15,7 @@
 ## 端口
 
 - `8090`：仅监听 NAS 本机，作为 QTS HTTP 代理的管理后端；
-- `8080`：默认文件共享端口，可在控制台修改。
+- `18080`：默认文件共享端口，可在控制台修改。
 
 管理控制台启用 QTS HTTP 代理，挂载路径为 `/miniserve`，由 QTS Web 端口提供访问；后端 `127.0.0.1:8090` 不直接暴露到局域网。控制台仍强制使用独立的 HTTP Basic 认证。首次启动会生成随机管理密码；用户名为 `admin`。通过 SSH 登录 NAS 后执行：
 
@@ -40,7 +40,7 @@ cargo build --release --target x86_64-unknown-linux-musl
 install -m 0755 target/x86_64-unknown-linux-musl/release/miniserve-qnap-manager \
   x86_64/bin/miniserve-qnap-manager
 fakeroot qbuild --build-arch x86_64 --strict
-scripts/verify-qpkg.sh build/miniserve-qnap_1.0.5_x86_64.qpkg
+scripts/verify-qpkg.sh build/miniserve-qnap_1.0.6_x86_64.qpkg
 ```
 
 构建结果位于 `build/`。可以在 QTS 的 App Center 中选择“手动安装”，上传生成的 `.qpkg`。

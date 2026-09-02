@@ -59,7 +59,7 @@ impl Default for Config {
         Self {
             share_dir: "/share/Public".into(),
             listen_address: "0.0.0.0".into(),
-            port: 8080,
+            port: 18080,
             title: "Miniserve 文件共享".into(),
             route_prefix: String::new(),
             upload: false,
