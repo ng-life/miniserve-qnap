@@ -85,6 +85,7 @@ struct AppState {
 struct Inner {
     config_path: PathBuf,
     admin_auth_path: PathBuf,
+    admin_auth_is_default_path: PathBuf,
     miniserve_path: PathBuf,
     child: Mutex<Option<Child>>,
     logs: RwLock<VecDeque<String>>,
@@ -101,12 +102,18 @@ struct StatusResponse {
     service_url: String,
     config: Config,
     logs: Vec<String>,
+    admin_password_is_default: bool,
 }
 
 #[derive(Serialize)]
 struct ApiMessage {
     ok: bool,
     message: String,
+}
+
+#[derive(Deserialize)]
+struct AdminPasswordUpdate {
+    new_password: String,
 }
 
 type ApiError = (StatusCode, Json<ApiMessage>);
@@ -123,7 +130,8 @@ async fn main() {
     let state = AppState {
         inner: Arc::new(Inner {
             config_path: PathBuf::from(config_path),
-            admin_auth_path: PathBuf::from(admin_auth_path),
+            admin_auth_path: PathBuf::from(&admin_auth_path),
+            admin_auth_is_default_path: PathBuf::from(format!("{}.default", admin_auth_path)),
             miniserve_path: PathBuf::from(miniserve_path),
             child: Mutex::new(None),
             logs: RwLock::new(VecDeque::new()),
@@ -149,6 +157,7 @@ async fn main() {
         .route("/api/status", get(status))
         .route("/api/config", put(update_config))
         .route("/api/restart", post(restart))
+        .route("/api/admin-password", put(update_admin_password))
         .fallback(not_found)
         .route_layer(middleware::from_fn_with_state(state.clone(), require_admin));
     let app = Router::new()
@@ -289,6 +298,29 @@ async fn restart(State(state): State<AppState>) -> Result<Json<StatusResponse>, 
         .map_err(internal_error)
 }
 
+async fn update_admin_password(
+    State(state): State<AppState>,
+    Json(payload): Json<AdminPasswordUpdate>,
+) -> Result<Json<ApiMessage>, ApiError> {
+    if payload.new_password.len() < 8 {
+        return Err(bad_request("新密码长度必须至少 8 个字符".into()));
+    }
+    if payload.new_password.contains(['\n', '\r', ':']) {
+        return Err(bad_request("密码不能包含换行符或冒号".into()));
+    }
+    let credentials = format!("admin:{}\n", payload.new_password);
+    write_private(&state.inner.admin_auth_path, credentials.as_bytes())
+        .await
+        .map_err(internal_error)?;
+    // Remove the default password marker
+    let _ = fs::remove_file(&state.inner.admin_auth_is_default_path).await;
+    push_log(&state, "INFO 管理员密码已更新".into()).await;
+    Ok(Json(ApiMessage {
+        ok: true,
+        message: "管理员密码已更新".into(),
+    }))
+}
+
 async fn status_payload(state: &AppState) -> Result<StatusResponse, String> {
     let config = load_config(&state.inner.config_path).await?;
     let (running, pid) = {
@@ -316,6 +348,7 @@ async fn status_payload(state: &AppState) -> Result<StatusResponse, String> {
         config.route_prefix
     );
     let logs = state.inner.logs.read().await.iter().cloned().collect();
+    let admin_password_is_default = state.inner.admin_auth_is_default_path.exists();
     Ok(StatusResponse {
         running,
         pid,
@@ -325,6 +358,7 @@ async fn status_payload(state: &AppState) -> Result<StatusResponse, String> {
         service_url,
         config: public_config,
         logs,
+        admin_password_is_default,
     })
 }
 
@@ -366,6 +400,8 @@ async fn ensure_admin_auth(state: &AppState) -> Result<(), String> {
     }
     let credentials = format!("admin:{}\n", random_password()?);
     write_private(path, credentials.as_bytes()).await?;
+    // Mark that this is a default generated password
+    write_private(&state.inner.admin_auth_is_default_path, b"1").await?;
     eprintln!(
         "Management password generated. Read the admin credentials from {}",
         path.display()

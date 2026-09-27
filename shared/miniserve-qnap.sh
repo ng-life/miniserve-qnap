@@ -81,6 +81,11 @@ start_service() {
     fi
     rm -f "$PID_FILE"
     echo "$QPKG_NAME failed readiness check; see $LOG_FILE."
+    # Extract and display the last error messages from the log
+    if [ -f "$LOG_FILE" ]; then
+        echo "Recent log entries:"
+        tail -n 10 "$LOG_FILE" | grep -E "ERROR|error|failed|Failed|cannot|Cannot" | tail -n 3
+    fi
     return 1
 }
 

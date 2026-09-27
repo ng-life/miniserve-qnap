@@ -74,6 +74,22 @@
     .save-note { margin-left: auto; color: var(--muted); font-size: 12px; }
     .toast { color: var(--green); font-size: 13px; font-weight: 600; }
     .toast.error { color: var(--red); }
+    .alert-banner { background: #fff3cd; border: 1px solid #ffc107; border-radius: var(--radius); padding: 16px 20px; margin-bottom: 12px; display: flex; align-items: center; gap: 14px; }
+    .alert-banner svg { width: 22px; height: 22px; stroke: #856404; flex: none; }
+    .alert-content { flex: 1; min-width: 0; }
+    .alert-content strong { display: block; color: #856404; font-size: 14px; margin-bottom: 4px; }
+    .alert-content p { margin: 0; color: #856404; font-size: 13px; line-height: 1.5; }
+    .alert-banner button { border: 1px solid #856404; background: transparent; color: #856404; height: 34px; padding: 0 16px; border-radius: var(--radius); cursor: pointer; font-weight: 600; font-size: 13px; white-space: nowrap; }
+    .alert-banner button:hover { background: #856404; color: #fff; }
+    .modal-overlay { position: fixed; inset: 0; background: rgba(0,0,0,.5); display: grid; place-items: center; z-index: 100; }
+    .modal { background: #fff; border-radius: 8px; width: 90%; max-width: 480px; box-shadow: 0 10px 40px rgba(0,0,0,.3); }
+    .modal-header { padding: 20px 24px; border-bottom: 1px solid var(--line); }
+    .modal-header h3 { margin: 0; font-size: 18px; }
+    .modal-body { padding: 24px; }
+    .modal-field { margin-bottom: 16px; }
+    .modal-field label { display: block; font-size: 14px; font-weight: 600; margin-bottom: 8px; }
+    .modal-field input { width: 100%; }
+    .modal-footer { padding: 16px 24px; border-top: 1px solid var(--line); display: flex; gap: 10px; justify-content: flex-end; }
     .logs { border: 1px solid var(--line); border-radius: var(--radius); margin-top: 12px; overflow: hidden; }
     .logs-head { height: 45px; display: flex; align-items: center; padding: 0 18px; border-bottom: 1px solid var(--line); }
     .logs-head h2 { font-size: 14px; margin: 0; }
@@ -136,6 +152,14 @@
     <div class="content" id="top">
       <header class="topbar"><span class="menu"><i></i><i></i><i></i></span><h1>Miniserve 控制台</h1><span class="top-meta">QNAP x86_64 · 管理端口 8090</span></header>
       <main>
+        <div id="default-password-alert" class="alert-banner" style="display:none;">
+          <svg viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2"><path d="M12 9v4m0 4h.01M12 3a9 9 0 1 0 0 18 9 9 0 0 0 0-18z"/></svg>
+          <div class="alert-content">
+            <strong>使用默认密码</strong>
+            <p>当前使用的是首次启动时自动生成的管理员密码。为了安全，建议立即修改密码。</p>
+          </div>
+          <button id="change-password-btn" type="button">修改密码</button>
+        </div>
         <section class="status" aria-label="服务状态">
           <div class="status-primary"><span id="status-dot" class="dot off"></span><span id="status-title" class="status-title off">正在连接</span></div>
           <div class="metric"><label>服务地址</label><a id="service-url" href="#" target="_blank" rel="noopener">—</a></div>
@@ -183,6 +207,27 @@
 
         <section class="logs" id="logs"><div class="logs-head"><h2>运行日志（最近 100 条）</h2><button id="refresh-logs" type="button">刷新</button></div><div id="log-list" class="log-list"><div class="empty">正在读取日志…</div></div></section>
       </main>
+    </div>
+  </div>
+  <div id="password-modal" class="modal-overlay" style="display:none;">
+    <div class="modal">
+      <div class="modal-header"><h3>修改管理员密码</h3></div>
+      <form id="password-form">
+        <div class="modal-body">
+          <div class="modal-field">
+            <label for="new-password">新密码</label>
+            <input id="new-password" type="password" required minlength="8" placeholder="至少 8 个字符">
+          </div>
+          <div class="modal-field">
+            <label for="confirm-password">确认密码</label>
+            <input id="confirm-password" type="password" required minlength="8" placeholder="再次输入新密码">
+          </div>
+        </div>
+        <div class="modal-footer">
+          <button type="button" class="button" id="cancel-password-btn">取消</button>
+          <button type="submit" class="button primary" id="submit-password-btn">确认修改</button>
+        </div>
+      </form>
     </div>
   </div>
   <script>
@@ -236,6 +281,7 @@
       $("version").textContent = `miniserve ${data.miniserve_version}`;
       $("uptime").textContent = formatUptime(data.started_at);
       renderLogs(data.logs || []);
+      $("default-password-alert").style.display = data.admin_password_is_default ? "flex" : "none";
       if (replaceForm || !loadedConfig) setForm(data.config, data.password_set);
     }
     function renderLogs(logs) {
@@ -274,6 +320,22 @@
     $("reset").addEventListener("click", () => loadedConfig && setForm(loadedConfig, $("password").placeholder.startsWith("已设置")));
     $("upload").addEventListener("change", syncDependencies);
     $("refresh-logs").addEventListener("click", () => refresh(false));
+    $("change-password-btn").addEventListener("click", () => $("password-modal").style.display = "grid");
+    $("cancel-password-btn").addEventListener("click", () => { $("password-modal").style.display = "none"; $("password-form").reset(); });
+    $("password-form").addEventListener("submit", async event => {
+      event.preventDefault();
+      const newPassword = $("new-password").value;
+      const confirmPassword = $("confirm-password").value;
+      if (newPassword !== confirmPassword) { showToast("两次输入的密码不一致", true); return; }
+      $("submit-password-btn").disabled = true; $("submit-password-btn").textContent = "正在修改…";
+      try {
+        await request("./api/admin-password", {method:"PUT", headers:{"Content-Type":"application/json"}, body:JSON.stringify({new_password:newPassword})});
+        $("password-modal").style.display = "none"; $("password-form").reset();
+        showToast("管理员密码已更新，请使用新密码重新登录");
+        setTimeout(() => location.reload(), 2000);
+      } catch (error) { showToast(error.message, true); }
+      finally { $("submit-password-btn").disabled = false; $("submit-password-btn").textContent = "确认修改"; }
+    });
     document.querySelectorAll("[data-target]").forEach(button => button.addEventListener("click", () => {
       document.querySelectorAll("[data-target]").forEach(item => item.classList.remove("active")); button.classList.add("active");
       $(button.dataset.target)?.scrollIntoView({behavior:"smooth", block:"start"});
