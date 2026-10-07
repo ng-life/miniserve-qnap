@@ -19,28 +19,29 @@
 
 管理控制台通过 QTS HTTP 代理挂载在 `/miniserve`，复用 QNAP 系统登录认证，不再要求独立的管理用户名和密码。管理服务强制只监听 `127.0.0.1:8090`，即使使用 `--listen` 参数指定其他地址也会拒绝启动；外部访问须通过 QTS 代理路径。请保持 QTS 对该代理路径的系统认证和管理员访问控制，不要将后端通过其他未认证的代理或端口转发暴露出去。是否使用 HTTPS 取决于 QTS 管理界面的访问方式。
 
-页面在 `/miniserve` 和 `/miniserve/` 下均使用 `/miniserve/api/...` 请求；后端同时兼容 QTS 转发时保留或剥离路径前缀。健康检查仍可在本机使用 `/healthz`。
+页面始终使用绝对路径 `/miniserve/api/...` 请求，不依赖页面当前地址，兼容 QTS 内嵌页面和代理入口；后端同时兼容 QTS 转发时保留或剥离路径前缀。健康检查仍可在本机使用 `/healthz`。
 
 文件共享使用另一套、可选的用户名和密码，通过控制台配置。文件共享密码同样以 `0600` 保存，且状态 API 永不返回存储的密码。
 
 ## 本地构建
 
-需要 QDK 2.5.3、Rust、`fakeroot` 和 musl 工具链：
+需要 QDK 2.5.3、Rust、`fakeroot` 和 musl 工具链；前端代理路径回归测试需要 Node.js：
 
 ```bash
 sudo apt install fakeroot musl-tools
 rustup target add x86_64-unknown-linux-musl
 cargo test
+node scripts/test-proxy-paths.cjs
 cargo build --release --target x86_64-unknown-linux-musl
 install -m 0755 target/x86_64-unknown-linux-musl/release/miniserve-qnap-manager \
   x86_64/bin/miniserve-qnap-manager
 fakeroot qbuild --build-arch x86_64 --strict
-scripts/verify-qpkg.sh build/miniserve-qnap_1.0.7_x86_64.qpkg
+scripts/verify-qpkg.sh build/miniserve-qnap_1.0.8_x86_64.qpkg
 ```
 
 构建结果位于 `build/`。可以在 QTS 的 App Center 中选择“手动安装”，上传生成的 `.qpkg`。
 
-GitHub Actions 会在每次推送和 Pull Request 时执行单元测试、QTS 生命周期脚本兼容性检查、管理 API/文件共享认证冒烟测试、HTTP 代理元数据检查、严格 QPKG 构建及包清单、属主和权限审计，然后上传 x86_64 Artifact。推送与 `QPKG_VER` 对应的标签（例如 `v1.0.7`）时，会自动创建 GitHub Release 并附加 `.qpkg` 与 MD5 文件。
+GitHub Actions 会在每次推送和 Pull Request 时执行单元测试、QTS 生命周期脚本兼容性检查、管理 API/文件共享认证冒烟测试、HTTP 代理元数据检查、严格 QPKG 构建及包清单、属主和权限审计，然后上传 x86_64 Artifact。推送与 `QPKG_VER` 对应的标签（例如 `v1.0.8`）时，会自动创建 GitHub Release 并附加 `.qpkg` 与 MD5 文件。
 
 ## 下载与安装
 

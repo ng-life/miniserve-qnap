@@ -65,6 +65,7 @@ jobs:
         run: |
           set -euxo pipefail
           cargo fmt --check
+          node scripts/test-proxy-paths.cjs
           cargo test --locked
           cargo build --locked --release --target x86_64-unknown-linux-musl
           install -m 0755 \

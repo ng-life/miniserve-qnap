@@ -253,9 +253,8 @@
       const toast = $("toast"); toast.textContent = message; toast.classList.toggle("error", error);
       clearTimeout(showToast.timer); showToast.timer = setTimeout(() => toast.textContent = "", 5000);
     }
-    const apiPrefix = location.pathname === "/miniserve" || location.pathname.startsWith("/miniserve/") ? "/miniserve" : "";
     async function request(path, options) {
-      const response = await fetch(`${apiPrefix}/api/${path}`, {credentials:"same-origin", cache:"no-store", ...options});
+      const response = await fetch(`/miniserve/api/${path}`, {credentials:"same-origin", cache:"no-store", ...options});
       const body = await response.json().catch(() => ({message:`HTTP ${response.status}`}));
       if (!response.ok) throw new Error(body.message || `HTTP ${response.status}`);
       return body;
