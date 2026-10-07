@@ -1,20 +1,15 @@
 use axum::{
     Json, Router,
-    extract::{Request, State},
-    http::{HeaderValue, StatusCode, header},
-    middleware,
-    middleware::Next,
-    response::{Html, IntoResponse, Response},
+    extract::State,
+    http::{StatusCode, header},
+    response::{Html, IntoResponse},
     routing::{get, post, put},
 };
-use base64::{Engine as _, engine::general_purpose::STANDARD};
 use serde::{Deserialize, Serialize};
 use std::{
     collections::VecDeque,
     env,
-    fs::File,
-    io::Read,
-    net::{IpAddr, SocketAddr},
+    net::{IpAddr, Ipv4Addr, SocketAddr},
     path::{Path, PathBuf},
     sync::{
         Arc,
@@ -22,7 +17,6 @@ use std::{
     },
     time::{Duration, SystemTime, UNIX_EPOCH},
 };
-use subtle::ConstantTimeEq;
 use tokio::{
     fs,
     io::{AsyncBufReadExt, BufReader},
@@ -84,8 +78,6 @@ struct AppState {
 
 struct Inner {
     config_path: PathBuf,
-    admin_auth_path: PathBuf,
-    admin_auth_is_default_path: PathBuf,
     miniserve_path: PathBuf,
     child: Mutex<Option<Child>>,
     logs: RwLock<VecDeque<String>>,
@@ -102,7 +94,6 @@ struct StatusResponse {
     service_url: String,
     config: Config,
     logs: Vec<String>,
-    admin_password_is_default: bool,
 }
 
 #[derive(Serialize)]
@@ -111,27 +102,23 @@ struct ApiMessage {
     message: String,
 }
 
-#[derive(Deserialize)]
-struct AdminPasswordUpdate {
-    new_password: String,
-}
-
 type ApiError = (StatusCode, Json<ApiMessage>);
 
 #[tokio::main]
 async fn main() {
     let args: Vec<String> = env::args().collect();
     let config_path = arg_value(&args, "--config").unwrap_or_else(|| "./config.json".into());
-    let admin_auth_path =
-        arg_value(&args, "--admin-auth-file").unwrap_or_else(|| "./admin-auth.txt".into());
     let miniserve_path = arg_value(&args, "--miniserve").unwrap_or_else(|| "./miniserve".into());
     let listen = arg_value(&args, "--listen").unwrap_or_else(|| "127.0.0.1:8090".into());
+
+    let address = management_address(&listen).unwrap_or_else(|error| {
+        eprintln!("{error}");
+        std::process::exit(2);
+    });
 
     let state = AppState {
         inner: Arc::new(Inner {
             config_path: PathBuf::from(config_path),
-            admin_auth_path: PathBuf::from(&admin_auth_path),
-            admin_auth_is_default_path: PathBuf::from(format!("{}.default", admin_auth_path)),
             miniserve_path: PathBuf::from(miniserve_path),
             child: Mutex::new(None),
             logs: RwLock::new(VecDeque::new()),
@@ -143,32 +130,25 @@ async fn main() {
         eprintln!("cannot initialize configuration: {error}");
         std::process::exit(1);
     }
-    if let Err(error) = ensure_admin_auth(&state).await {
-        eprintln!("cannot initialize management authentication: {error}");
-        std::process::exit(1);
-    }
     if let Err(error) = restart_miniserve(&state).await {
         push_log(&state, format!("ERROR miniserve 启动失败：{error}")).await;
     }
 
-    let protected = Router::new()
+    // QTS proxy versions may strip or preserve the /miniserve prefix.
+    let routes = Router::new()
         .route("/", get(index))
         .route("/favicon.ico", get(favicon))
         .route("/api/status", get(status))
         .route("/api/config", put(update_config))
         .route("/api/restart", post(restart))
-        .route("/api/admin-password", put(update_admin_password))
-        .fallback(not_found)
-        .route_layer(middleware::from_fn_with_state(state.clone(), require_admin));
+        .route("/healthz", get(health));
     let app = Router::new()
-        .route("/healthz", get(health))
-        .merge(protected)
+        .nest("/miniserve", routes.clone())
+        .route("/miniserve/", get(index))
+        .merge(routes)
+        .fallback(not_found)
         .with_state(state.clone());
 
-    let address: SocketAddr = listen.parse().unwrap_or_else(|error| {
-        eprintln!("invalid --listen address {listen}: {error}");
-        std::process::exit(2);
-    });
     let listener = tokio::net::TcpListener::bind(address)
         .await
         .unwrap_or_else(|error| {
@@ -185,43 +165,14 @@ async fn main() {
     }
 }
 
-async fn require_admin(State(state): State<AppState>, request: Request, next: Next) -> Response {
-    let authorized = match request.headers().get(header::AUTHORIZATION) {
-        Some(value) => verify_basic_auth(&state.inner.admin_auth_path, value).await,
-        None => false,
-    };
-    if authorized {
-        return next.run(request).await;
+fn management_address(listen: &str) -> Result<SocketAddr, String> {
+    let address: SocketAddr = listen
+        .parse()
+        .map_err(|error| format!("invalid --listen address {listen}: {error}"))?;
+    if address.ip() != IpAddr::V4(Ipv4Addr::LOCALHOST) {
+        return Err("management server must listen on 127.0.0.1; use the QTS /miniserve proxy for external access".into());
     }
-    (
-        StatusCode::UNAUTHORIZED,
-        [(header::WWW_AUTHENTICATE, "Basic realm=\"Miniserve QNAP\"")],
-        "Authentication required",
-    )
-        .into_response()
-}
-
-async fn verify_basic_auth(path: &Path, value: &HeaderValue) -> bool {
-    let Ok(header_value) = value.to_str() else {
-        return false;
-    };
-    let Some(encoded) = header_value.strip_prefix("Basic ") else {
-        return false;
-    };
-    let Ok(decoded) = STANDARD.decode(encoded) else {
-        return false;
-    };
-    let Ok(received) = std::str::from_utf8(&decoded) else {
-        return false;
-    };
-    let Ok(expected) = fs::read_to_string(path).await else {
-        return false;
-    };
-    constant_time_eq(received.as_bytes(), expected.trim_end().as_bytes())
-}
-
-fn constant_time_eq(left: &[u8], right: &[u8]) -> bool {
-    left.len() == right.len() && bool::from(left.ct_eq(right))
+    Ok(address)
 }
 
 async fn health(State(state): State<AppState>) -> impl IntoResponse {
@@ -298,29 +249,6 @@ async fn restart(State(state): State<AppState>) -> Result<Json<StatusResponse>, 
         .map_err(internal_error)
 }
 
-async fn update_admin_password(
-    State(state): State<AppState>,
-    Json(payload): Json<AdminPasswordUpdate>,
-) -> Result<Json<ApiMessage>, ApiError> {
-    if payload.new_password.len() < 8 {
-        return Err(bad_request("新密码长度必须至少 8 个字符".into()));
-    }
-    if payload.new_password.contains(['\n', '\r', ':']) {
-        return Err(bad_request("密码不能包含换行符或冒号".into()));
-    }
-    let credentials = format!("admin:{}\n", payload.new_password);
-    write_private(&state.inner.admin_auth_path, credentials.as_bytes())
-        .await
-        .map_err(internal_error)?;
-    // Remove the default password marker
-    let _ = fs::remove_file(&state.inner.admin_auth_is_default_path).await;
-    push_log(&state, "INFO 管理员密码已更新".into()).await;
-    Ok(Json(ApiMessage {
-        ok: true,
-        message: "管理员密码已更新".into(),
-    }))
-}
-
 async fn status_payload(state: &AppState) -> Result<StatusResponse, String> {
     let config = load_config(&state.inner.config_path).await?;
     let (running, pid) = {
@@ -348,7 +276,6 @@ async fn status_payload(state: &AppState) -> Result<StatusResponse, String> {
         config.route_prefix
     );
     let logs = state.inner.logs.read().await.iter().cloned().collect();
-    let admin_password_is_default = state.inner.admin_auth_is_default_path.exists();
     Ok(StatusResponse {
         running,
         pid,
@@ -358,7 +285,6 @@ async fn status_payload(state: &AppState) -> Result<StatusResponse, String> {
         service_url,
         config: public_config,
         logs,
-        admin_password_is_default,
     })
 }
 
@@ -382,54 +308,6 @@ async fn ensure_config(state: &AppState) -> Result<(), String> {
             .map_err(|error| format!("cannot create configuration directory: {error}"))?;
     }
     save_config(&state.inner.config_path, &Config::default()).await
-}
-
-async fn ensure_admin_auth(state: &AppState) -> Result<(), String> {
-    let path = &state.inner.admin_auth_path;
-    if path.exists() {
-        let value = fs::read_to_string(path)
-            .await
-            .map_err(|error| format!("cannot read {}: {error}", path.display()))?;
-        validate_admin_auth(value.trim_end())?;
-        return Ok(());
-    }
-    if let Some(parent) = path.parent() {
-        fs::create_dir_all(parent)
-            .await
-            .map_err(|error| format!("cannot create authentication directory: {error}"))?;
-    }
-    let credentials = format!("admin:{}\n", random_password()?);
-    write_private(path, credentials.as_bytes()).await?;
-    // Mark that this is a default generated password
-    write_private(&state.inner.admin_auth_is_default_path, b"1").await?;
-    eprintln!(
-        "Management password generated. Read the admin credentials from {}",
-        path.display()
-    );
-    Ok(())
-}
-
-fn random_password() -> Result<String, String> {
-    let mut bytes = [0_u8; 18];
-    File::open("/dev/urandom")
-        .and_then(|mut source| source.read_exact(&mut bytes))
-        .map_err(|error| format!("cannot read secure random bytes: {error}"))?;
-    Ok(bytes.iter().map(|byte| format!("{byte:02x}")).collect())
-}
-
-fn validate_admin_auth(value: &str) -> Result<(), String> {
-    let Some((username, password)) = value.split_once(':') else {
-        return Err("management auth file must contain username:password".into());
-    };
-    if username.is_empty() || password.len() < 16 {
-        return Err(
-            "management username must be set and password must have at least 16 characters".into(),
-        );
-    }
-    if value.contains(['\n', '\r']) {
-        return Err("management credentials must be on one line".into());
-    }
-    Ok(())
 }
 
 async fn write_private(path: &Path, bytes: &[u8]) -> Result<(), String> {
@@ -726,19 +604,20 @@ mod tests {
     }
 
     #[test]
-    fn constant_time_credentials_require_exact_match() {
-        assert!(constant_time_eq(
-            b"admin:0123456789abcdef",
-            b"admin:0123456789abcdef"
-        ));
-        assert!(!constant_time_eq(b"admin:wrong", b"admin:0123456789abcdef"));
-    }
-
-    #[test]
-    fn management_password_is_long_and_random() {
-        let first = random_password().unwrap();
-        let second = random_password().unwrap();
-        assert_eq!(first.len(), 36);
-        assert_ne!(first, second);
+    fn management_listener_only_accepts_ipv4_localhost() {
+        assert_eq!(
+            management_address("127.0.0.1:8090").unwrap().to_string(),
+            "127.0.0.1:8090"
+        );
+        for address in [
+            "0.0.0.0:8090",
+            "192.168.1.10:8090",
+            "127.0.0.2:8090",
+            "[::]:8090",
+            "[::1]:8090",
+            "invalid",
+        ] {
+            assert!(management_address(address).is_err(), "accepted {address}");
+        }
     }
 }

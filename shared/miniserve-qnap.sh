@@ -8,7 +8,6 @@ LOG_FILE="$DATA_DIR/manager.log"
 MANAGER="$QPKG_ROOT/bin/miniserve-qnap-manager"
 MINISERVE="$QPKG_ROOT/bin/miniserve"
 CONFIG_FILE="$DATA_DIR/config.json"
-ADMIN_AUTH_FILE="$DATA_DIR/admin-auth.txt"
 export QNAP_QPKG="$QPKG_NAME"
 
 read_manager_pid() {
@@ -57,7 +56,6 @@ start_service() {
     # stdin detached and keep its output in the private application log.
     "$MANAGER" \
         --config "$CONFIG_FILE" \
-        --admin-auth-file "$ADMIN_AUTH_FILE" \
         --miniserve "$MINISERVE" \
         --listen "127.0.0.1:8090" \
         </dev/null >>"$LOG_FILE" 2>&1 &
